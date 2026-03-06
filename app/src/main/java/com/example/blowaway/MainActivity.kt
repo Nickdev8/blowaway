@@ -2,12 +2,15 @@ package com.example.blowaway
 
 import android.Manifest
 import android.app.Activity
-import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
+import android.graphics.Typeface
 import android.os.Bundle
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
@@ -30,16 +33,20 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
 
+        findViewById<Button>(R.id.openBlowDetectionChannelButton).setOnClickListener {
+            openBlowDetectionChannelSettings()
+        }
+
         findViewById<Button>(R.id.toggleBackgroundButton).setOnClickListener {
             toggleBackgroundListening()
         }
 
-        updateStatus()
+        refreshStatus()
     }
 
     override fun onResume() {
         super.onResume()
-        updateStatus()
+        syncBackgroundMode()
     }
 
     override fun onRequestPermissionsResult(
@@ -55,16 +62,16 @@ class MainActivity : Activity() {
                 if (granted) R.string.permissions_granted else R.string.permissions_denied,
                 Toast.LENGTH_SHORT
             ).show()
-            updateStatus()
+            syncBackgroundMode()
         }
     }
 
     private fun requestRequiredPermissions() {
         val permissions = buildList {
-            if (!hasAudioPermission()) {
+            if (!BackgroundModeController.hasAudioPermission(this@MainActivity)) {
                 add(Manifest.permission.RECORD_AUDIO)
             }
-            if (!hasNotificationPermission()) {
+            if (!BackgroundModeController.hasNotificationPermission(this@MainActivity)) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
@@ -78,56 +85,73 @@ class MainActivity : Activity() {
     }
 
     private fun toggleBackgroundListening() {
-        if (!hasAudioPermission() || !hasNotificationPermission()) {
+        if (!BackgroundModeController.hasAudioPermission(this) ||
+            !BackgroundModeController.hasNotificationPermission(this)
+        ) {
             Toast.makeText(this, R.string.permissions_needed_for_background_mode, Toast.LENGTH_SHORT)
                 .show()
             return
         }
 
         if (BlowDetectionService.isArmed()) {
-            startService(BlowDetectionService.createStopIntent(this))
+            BackgroundModeController.stopBackgroundListening(this)
         } else {
-            startForegroundService(BlowDetectionService.createStartIntent(this))
+            BackgroundModeController.tryAutoArm(this)
         }
 
+        refreshStatus()
+    }
+
+    private fun openBlowDetectionChannelSettings() {
+        BlowDetectionService.ensureNotificationChannel(this)
+
+        val intent = Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            putExtra(Settings.EXTRA_CHANNEL_ID, BlowDetectionService.CHANNEL_ID)
+        }
+
+        if (intent.resolveActivity(packageManager) != null) {
+            startActivity(intent)
+            return
+        }
+
+        val fallbackIntent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+        }
+
+        if (fallbackIntent.resolveActivity(packageManager) != null) {
+            startActivity(fallbackIntent)
+            return
+        }
+
+        Toast.makeText(this, R.string.notification_settings_unavailable, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun syncBackgroundMode() {
+        BackgroundModeController.tryAutoArm(this)
+        refreshStatus()
+    }
+
+    private fun refreshStatus() {
+        updateStatus()
         statusText.postDelayed({ updateStatus() }, 300)
     }
 
     private fun updateStatus() {
-        val audioStatus = if (hasAudioPermission()) {
-            getString(R.string.status_granted)
-        } else {
-            getString(R.string.status_missing)
-        }
+        val hasAudioPermission = BackgroundModeController.hasAudioPermission(this)
+        val hasNotificationPermission = BackgroundModeController.hasNotificationPermission(this)
+        val hasNotificationAccess = BackgroundModeController.hasNotificationAccess(this)
+        val isBackgroundArmed = BlowDetectionService.isArmed()
 
-        val notificationPermissionStatus = if (hasNotificationPermission()) {
-            getString(R.string.status_granted)
-        } else {
-            getString(R.string.status_missing)
-        }
-
-        val listenerStatus = if (hasNotificationAccess()) {
-            getString(R.string.status_enabled)
-        } else {
-            getString(R.string.status_disabled)
-        }
-
-        val backgroundStatus = if (BlowDetectionService.isArmed()) {
-            getString(R.string.status_armed)
-        } else {
-            getString(R.string.status_disarmed)
-        }
-
-        statusText.text = getString(
-            R.string.status_template,
-            audioStatus,
-            notificationPermissionStatus,
-            listenerStatus,
-            backgroundStatus
+        statusText.text = buildStatusText(
+            audioReady = hasAudioPermission,
+            notificationsReady = hasNotificationPermission,
+            listenerReady = hasNotificationAccess,
+            backgroundReady = isBackgroundArmed
         )
 
         findViewById<Button>(R.id.toggleBackgroundButton).text = getString(
-            if (BlowDetectionService.isArmed()) {
+            if (isBackgroundArmed) {
                 R.string.stop_background_button
             } else {
                 R.string.start_background_button
@@ -135,34 +159,71 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun hasAudioPermission(): Boolean {
-        return checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
+    private fun buildStatusText(
+        audioReady: Boolean,
+        notificationsReady: Boolean,
+        listenerReady: Boolean,
+        backgroundReady: Boolean
+    ): CharSequence {
+        val builder = SpannableStringBuilder()
+
+        appendStatusLine(
+            builder,
+            getString(R.string.status_label_microphone),
+            if (audioReady) getString(R.string.status_granted) else getString(R.string.status_missing),
+            audioReady
+        )
+        appendStatusLine(
+            builder,
+            getString(R.string.status_label_post_notifications),
+            if (notificationsReady) getString(R.string.status_granted) else getString(R.string.status_missing),
+            notificationsReady
+        )
+        appendStatusLine(
+            builder,
+            getString(R.string.status_label_notification_access),
+            if (listenerReady) getString(R.string.status_enabled) else getString(R.string.status_disabled),
+            listenerReady
+        )
+        appendStatusLine(
+            builder,
+            getString(R.string.status_label_background_mode),
+            if (backgroundReady) getString(R.string.status_armed) else getString(R.string.status_disarmed),
+            backgroundReady
+        )
+
+        return builder
     }
 
-    private fun hasNotificationPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED
-        } else {
-            true
+    private fun appendStatusLine(
+        builder: SpannableStringBuilder,
+        label: String,
+        value: String,
+        isReady: Boolean
+    ) {
+        if (builder.isNotEmpty()) {
+            builder.append('\n')
+        }
+
+        val lineStart = builder.length
+        val lineText = "$label: $value"
+        builder.append(lineText)
+        builder.setSpan(
+            StyleSpan(Typeface.BOLD),
+            lineStart,
+            lineStart + label.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+
+        if (!isReady) {
+            builder.setSpan(
+                ForegroundColorSpan(getColor(android.R.color.holo_red_dark)),
+                lineStart,
+                lineStart + lineText.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
         }
     }
-
-    private fun hasNotificationAccess(): Boolean {
-        val enabledListeners = Settings.Secure.getString(
-            contentResolver,
-            "enabled_notification_listeners"
-        ) ?: return false
-
-        val targetComponent = ComponentName(this, BlowNotificationListener::class.java)
-
-        return enabledListeners
-            .split(':')
-            .mapNotNull(ComponentName::unflattenFromString)
-            .any { it == targetComponent }
-    }
-
     companion object {
         private const val REQUEST_REQUIRED_PERMISSIONS = 1001
     }

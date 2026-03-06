@@ -4,9 +4,11 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.util.Log
 
 class BlowDetectionService : Service() {
 
@@ -18,9 +20,11 @@ class BlowDetectionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_ARM -> {
-                isArmed = true
-                updateForegroundNotification(isActivelyListening = false)
-                return START_STICKY
+                return if (armForegroundIfPossible()) {
+                    START_STICKY
+                } else {
+                    START_NOT_STICKY
+                }
             }
 
             ACTION_DISARM -> {
@@ -46,15 +50,10 @@ class BlowDetectionService : Service() {
                     return START_STICKY
                 }
 
-                updateForegroundNotification(isActivelyListening = true)
-
                 workerThread = Thread {
                     val detected = BlowDetector().detectBlow(LISTEN_WINDOW_MS)
                     if (detected) {
                         NotificationController.cancelNotification(notificationKey)
-                    }
-                    if (isArmed) {
-                        updateForegroundNotification(isActivelyListening = false)
                     }
                 }.apply {
                     name = "BlowDetectionThread"
@@ -65,8 +64,7 @@ class BlowDetectionService : Service() {
             }
 
             null -> {
-                if (isArmed) {
-                    updateForegroundNotification(isActivelyListening = false)
+                if (armForegroundIfPossible()) {
                     return START_STICKY
                 }
                 stopSelf()
@@ -83,24 +81,21 @@ class BlowDetectionService : Service() {
         super.onDestroy()
     }
 
-    private fun createForegroundNotification(isActivelyListening: Boolean): Notification {
-        ensureNotificationChannel()
+    private fun createForegroundNotification(): Notification {
+        ensureNotificationChannel(this)
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.foreground_notification_title))
-            .setContentText(
-                if (isActivelyListening) {
-                    getString(R.string.foreground_notification_active_text)
-                } else {
-                    getString(R.string.foreground_notification_idle_text)
-                }
-            )
+            .setContentText(getString(R.string.foreground_notification_idle_text))
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
+            .setLocalOnly(true)
             .build()
     }
 
-    private fun updateForegroundNotification(isActivelyListening: Boolean) {
-        val notification = createForegroundNotification(isActivelyListening)
+    private fun ensureForegroundNotification() {
+        val notification = createForegroundNotification()
         startForeground(
             FOREGROUND_NOTIFICATION_ID,
             notification,
@@ -108,21 +103,28 @@ class BlowDetectionService : Service() {
         )
     }
 
-    private fun ensureNotificationChannel() {
-        val manager = getSystemService(NotificationManager::class.java)
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) {
-            return
+    private fun armForegroundIfPossible(): Boolean {
+        if (!BackgroundModeController.hasRequiredSetup(this)) {
+            isArmed = false
+            stopSelf()
+            return false
         }
 
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            getString(R.string.foreground_channel_name),
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = getString(R.string.foreground_channel_description)
+        return try {
+            ensureForegroundNotification()
+            isArmed = true
+            true
+        } catch (exception: IllegalStateException) {
+            Log.w(TAG, "Android blocked the microphone foreground service start.", exception)
+            isArmed = false
+            stopSelf()
+            false
+        } catch (exception: SecurityException) {
+            Log.w(TAG, "Foreground microphone service permissions are not currently eligible.", exception)
+            isArmed = false
+            stopSelf()
+            false
         }
-
-        manager.createNotificationChannel(channel)
     }
 
     companion object {
@@ -132,27 +134,61 @@ class BlowDetectionService : Service() {
         const val EXTRA_NOTIFICATION_KEY = "notification_key"
         const val CHANNEL_ID = "blow_detection"
 
+        private const val TAG = "BlowDetectionService"
         @Volatile
         private var isArmed = false
 
         private const val FOREGROUND_NOTIFICATION_ID = 2001
         private const val LISTEN_WINDOW_MS = 8_000L
 
-        fun createStartIntent(context: android.content.Context): Intent {
+        fun createStartIntent(context: Context): Intent {
             return Intent(context, BlowDetectionService::class.java).setAction(ACTION_ARM)
         }
 
-        fun createStopIntent(context: android.content.Context): Intent {
+        fun createStopIntent(context: Context): Intent {
             return Intent(context, BlowDetectionService::class.java).setAction(ACTION_DISARM)
         }
 
         fun createDetectIntent(
-            context: android.content.Context,
+            context: Context,
             notificationKey: String
         ): Intent {
             return Intent(context, BlowDetectionService::class.java)
                 .setAction(ACTION_DETECT)
                 .putExtra(EXTRA_NOTIFICATION_KEY, notificationKey)
+        }
+
+        fun tryArm(context: Context): Boolean {
+            return try {
+                context.startForegroundService(createStartIntent(context))
+                true
+            } catch (exception: IllegalStateException) {
+                Log.w(TAG, "Android rejected the foreground service start request.", exception)
+                false
+            } catch (exception: SecurityException) {
+                Log.w(TAG, "Foreground microphone service start is not currently eligible.", exception)
+                false
+            }
+        }
+
+        fun ensureNotificationChannel(context: Context) {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            if (manager.getNotificationChannel(CHANNEL_ID) != null) {
+                return
+            }
+
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                context.getString(R.string.foreground_channel_name),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = context.getString(R.string.foreground_channel_description)
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+            }
+
+            manager.createNotificationChannel(channel)
         }
 
         fun isArmed(): Boolean = isArmed

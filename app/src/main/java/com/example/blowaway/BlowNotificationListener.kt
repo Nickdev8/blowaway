@@ -11,6 +11,7 @@ class BlowNotificationListener : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         NotificationController.register(this)
+        BackgroundModeController.tryAutoArm(this)
     }
 
     override fun onDestroy() {
@@ -21,6 +22,7 @@ class BlowNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         NotificationController.register(this)
+        BackgroundModeController.tryAutoArm(this)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
@@ -29,7 +31,10 @@ class BlowNotificationListener : NotificationListenerService() {
         }
 
         if (!BlowDetectionService.isArmed()) {
-            return
+            BackgroundModeController.tryAutoArm(this)
+            if (!BlowDetectionService.isArmed()) {
+                return
+            }
         }
 
         if (!sbn.isClearable) {
