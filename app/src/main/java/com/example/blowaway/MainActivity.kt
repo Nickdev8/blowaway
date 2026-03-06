@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
@@ -22,11 +23,15 @@ class MainActivity : Activity() {
         statusText = findViewById(R.id.statusText)
 
         findViewById<Button>(R.id.requestAudioButton).setOnClickListener {
-            requestAudioPermission()
+            requestRequiredPermissions()
         }
 
         findViewById<Button>(R.id.openNotificationAccessButton).setOnClickListener {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        }
+
+        findViewById<Button>(R.id.toggleBackgroundButton).setOnClickListener {
+            toggleBackgroundListening()
         }
 
         updateStatus()
@@ -43,29 +48,59 @@ class MainActivity : Activity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_RECORD_AUDIO) {
-            val granted = grantResults.isNotEmpty() &&
-                grantResults[0] == PackageManager.PERMISSION_GRANTED
+        if (requestCode == REQUEST_REQUIRED_PERMISSIONS) {
+            val granted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
             Toast.makeText(
                 this,
-                if (granted) R.string.audio_permission_granted else R.string.audio_permission_denied,
+                if (granted) R.string.permissions_granted else R.string.permissions_denied,
                 Toast.LENGTH_SHORT
             ).show()
             updateStatus()
         }
     }
 
-    private fun requestAudioPermission() {
-        if (hasAudioPermission()) {
-            Toast.makeText(this, R.string.audio_permission_already_granted, Toast.LENGTH_SHORT).show()
+    private fun requestRequiredPermissions() {
+        val permissions = buildList {
+            if (!hasAudioPermission()) {
+                add(Manifest.permission.RECORD_AUDIO)
+            }
+            if (!hasNotificationPermission()) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        if (permissions.isEmpty()) {
+            Toast.makeText(this, R.string.permissions_already_granted, Toast.LENGTH_SHORT).show()
             return
         }
 
-        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_RECORD_AUDIO)
+        requestPermissions(permissions.toTypedArray(), REQUEST_REQUIRED_PERMISSIONS)
+    }
+
+    private fun toggleBackgroundListening() {
+        if (!hasAudioPermission() || !hasNotificationPermission()) {
+            Toast.makeText(this, R.string.permissions_needed_for_background_mode, Toast.LENGTH_SHORT)
+                .show()
+            return
+        }
+
+        if (BlowDetectionService.isArmed()) {
+            startService(BlowDetectionService.createStopIntent(this))
+        } else {
+            startForegroundService(BlowDetectionService.createStartIntent(this))
+        }
+
+        statusText.postDelayed({ updateStatus() }, 300)
     }
 
     private fun updateStatus() {
         val audioStatus = if (hasAudioPermission()) {
+            getString(R.string.status_granted)
+        } else {
+            getString(R.string.status_missing)
+        }
+
+        val notificationPermissionStatus = if (hasNotificationPermission()) {
             getString(R.string.status_granted)
         } else {
             getString(R.string.status_missing)
@@ -77,12 +112,41 @@ class MainActivity : Activity() {
             getString(R.string.status_disabled)
         }
 
-        statusText.text = getString(R.string.status_template, audioStatus, listenerStatus)
+        val backgroundStatus = if (BlowDetectionService.isArmed()) {
+            getString(R.string.status_armed)
+        } else {
+            getString(R.string.status_disarmed)
+        }
+
+        statusText.text = getString(
+            R.string.status_template,
+            audioStatus,
+            notificationPermissionStatus,
+            listenerStatus,
+            backgroundStatus
+        )
+
+        findViewById<Button>(R.id.toggleBackgroundButton).text = getString(
+            if (BlowDetectionService.isArmed()) {
+                R.string.stop_background_button
+            } else {
+                R.string.start_background_button
+            }
+        )
     }
 
     private fun hasAudioPermission(): Boolean {
         return checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun hasNotificationPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
     }
 
     private fun hasNotificationAccess(): Boolean {
@@ -100,6 +164,6 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        private const val REQUEST_RECORD_AUDIO = 1001
+        private const val REQUEST_REQUIRED_PERMISSIONS = 1001
     }
 }

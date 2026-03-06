@@ -34,6 +34,7 @@ class TestNotificationReceiver : BroadcastReceiver() {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setAutoCancel(true)
+            .setLocalOnly(true)
             .build()
 
         manager.notify(TEST_NOTIFICATION_ID, notification)

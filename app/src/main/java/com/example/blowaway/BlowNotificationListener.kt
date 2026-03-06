@@ -28,6 +28,10 @@ class BlowNotificationListener : NotificationListenerService() {
             return
         }
 
+        if (!BlowDetectionService.isArmed()) {
+            return
+        }
+
         if (!sbn.isClearable) {
             return
         }
@@ -36,12 +40,8 @@ class BlowNotificationListener : NotificationListenerService() {
             return
         }
 
-        val serviceIntent = Intent(this, BlowDetectionService::class.java).apply {
-            putExtra(BlowDetectionService.EXTRA_NOTIFICATION_KEY, sbn.key)
-        }
-
         try {
-            startForegroundService(serviceIntent)
+            startService(BlowDetectionService.createDetectIntent(this, sbn.key))
         } catch (exception: IllegalStateException) {
             Log.w(TAG, "Android blocked the foreground service start for blow detection.", exception)
         } catch (exception: SecurityException) {

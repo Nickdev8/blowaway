@@ -2,20 +2,26 @@
 <resources>
     <string name="app_name">BlowAway</string>
     <string name="title_text">BlowAway</string>
-    <string name="body_text">Grant microphone access, enable notification access, then trigger a heads-up notification and blow into the microphone within eight seconds.</string>
-    <string name="request_audio_button">Request microphone permission</string>
+    <string name="body_text">Grant microphone and notification permission, enable notification access, then arm background listening once. After that, BlowAway can keep listening with the app closed.</string>
+    <string name="request_audio_button">Request required permissions</string>
     <string name="open_notification_access_button">Open notification access settings</string>
-    <string name="status_template">Microphone: %1$s\nNotification access: %2$s</string>
+    <string name="start_background_button">Arm background listening</string>
+    <string name="stop_background_button">Stop background listening</string>
+    <string name="status_template">Microphone: %1$s\nPost notifications: %2$s\nNotification access: %3$s\nBackground mode: %4$s</string>
     <string name="status_granted">granted</string>
     <string name="status_missing">missing</string>
     <string name="status_enabled">enabled</string>
     <string name="status_disabled">disabled</string>
-    <string name="audio_permission_granted">Microphone permission granted.</string>
-    <string name="audio_permission_denied">Microphone permission denied.</string>
-    <string name="audio_permission_already_granted">Microphone permission is already granted.</string>
+    <string name="status_armed">armed</string>
+    <string name="status_disarmed">off</string>
+    <string name="permissions_granted">Permissions granted.</string>
+    <string name="permissions_denied">One or more permissions are still missing.</string>
+    <string name="permissions_already_granted">Required permissions are already granted.</string>
+    <string name="permissions_needed_for_background_mode">Grant permissions before arming background listening.</string>
     <string name="notification_listener_label">BlowAway notification access</string>
-    <string name="foreground_notification_title">Listening for a blow</string>
-    <string name="foreground_notification_text">Blow into the microphone to dismiss the latest heads-up notification.</string>
+    <string name="foreground_notification_title">BlowAway is armed</string>
+    <string name="foreground_notification_idle_text">Waiting in the background for the next heads-up notification.</string>
+    <string name="foreground_notification_active_text">Listening for a blow for eight seconds.</string>
     <string name="foreground_channel_name">Blow detection</string>
-    <string name="foreground_channel_description">Runs the microphone listener for a few seconds after a heads-up notification arrives.</string>
+    <string name="foreground_channel_description">Keeps BlowAway armed so it can listen for a blow after a heads-up notification arrives.</string>
 </resources>
